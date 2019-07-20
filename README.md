@@ -1,515 +1,439 @@
-# Roll\_up tutorial, a layer 1 SNARK-based scalability solution for Ethereum
+# RollupNC_tutorial
+This is a [circom](https://github.com/iden3/circom) and [snarkjs](https://github.com/iden3/snarkjs) tutorial, using [RollupNC](https://github.com/barryWhiteHat/RollupNC) as an example. It takes you through how to build RollupNC, circuit by circuit, with generated inputs to test the circuits out.
 
-## Introduction
+(Created for [IC3 2019](https://www.initc3.org/) and inspired by [GuthL's rollup circom tutorial](https://github.com/GuthL/roll_up_circom_tutorial).)
 
-roll\_up is a name for the pattern of performing merkle tree updates, signature validations inside a succinct proof system. This allows us to make dapps with throughput of between 100tps and 37000 tps on ethereum today. 
+- [RollupNC_tutorial](#rollupnc_tutorial)
+  * [Setting up this tutorial](#setting-up-this-tutorial)
+  * [Exercises](#exercises)
+    + [Simple arithmetic constraints](#simple-arithmetic-constraints)
+      - [Challenge](#challenge)
+    + [Verifying an EdDSA signature](#verifying-an-eddsa-signature)
+      - [Challenge](#challenge-1)
+    + [Verifying a Merkle proof](#verifying-a-merkle-proof)
+      - [Challenge](#challenge-2)
+    + [Processing a single transaction](#processing-a-single-transaction)
+    + [Processing multiple transactions](#processing-multiple-transactions)
+  * [If conditions and comparators](#if-conditions-and-comparators)
 
-This has a transformative scaling implications. We can do 500 tps\* and still maintain data availability guarantees of Ethereum. We end up including with our snark a diff between state t and state t+1 as well as a proof that the transition from t to t+1 is correct.
+![](https://i.imgur.com/x1tDlfD.png)
 
-![](https://i.imgur.com/E5oDG1a.png)
+## Setting up this tutorial
+0. We are using `node v10.16.0`, which you can possibly install using [nvm](https://github.com/nvm-sh/nvm/blob/master/README.md)
+1. Clone this repo: `git clone https://github.com/therealyingtong/RollupNC_tutorial`
+2. Clone the submodules: `git submodule update --init --recursive`
+- this should clone `circomlib`. We are using v0.0.6 for this tutorial. To make sure we're using the same commit, do `git checkout 77928872169b7179c9eee545afe0a972d15b1e64` in the `circomlib` repository.
+3. Install npm packages in both the root repository and the `circomlib` submodule: `npm i`
 
-### Data availability options
-In a bunch of contexts we don't need to have all this data available. For example, we could build a non-custodial exchange where the exchange operator is able to deprive me of access to my funds, which would still be a strict improvement over centralized exchanges. There are a bunch of less critical applications that can enter this model and simply do a redeployment if this attack happens. For example crypto kitties, on-chain twitter would be good candidates for this kind of approach.
+NB: there's a circom syntax highlighter in VS code! otherwise one can make do with `C#` highlighting.
 
-If we remove the need to have data availability on chain, we will be able to reach 8000 tps. If we weaken our assumptions further and stake the operator and slash them if they ever publish a proof that is invalid, we can reduce the gas costs from 500k gas to the gas cost of putting a snark proof in storage. 288 bytes of storage space. 640k gas per kilo byte. So that means we can approach 34000 tps if we don't validate snarks or put data on chain. We only need to validate them if they are incorrect and then we can slash the operator. 
+## Exercises
+### Simple arithmetic constraints
+`cd 1_simple_arithmetic`
 
-The tools to build with snarks are improving to the point where you can make a mixer in a 3 day hackathon. You can also make roll_up style dapps. 
-Here we introduce you to the tools that circom provides. It gives a nice dev experience but still needs some work on the proving time optimizations. But it should be enough to play around with and if you want to go to prod at the hackathon we include some ideas about doing this in the disclaimer section. 
+This is a contrived example to familiarise ourselves with the syntax of `circom` and how it works with `snarkjs`.
 
-\* Note we ignore the cost of creating the snark proof and assume the operator is able to bear these costs. Which is less 100 USD per proof and is sub cent per transaction. This cost only needs to be paid by a single participant. 
+Let's write a circuit to check:
+- that the sum of two private inputs `a + b` is equal to a public input `c`;
+- that the product `b * c` is equal to private input `d`;
 
-## Operator paradigm
+Create a new file named `circuit.circom` with the following content:
+```
+template SimpleChecks() {
+    signal private input a;
+    signal private input b;
+    signal input c;
+    signal private input d;
+    signal output out;
+    
+    // force a + b = c
+    a + b === c;
 
-We have a new paradigm where users create signatures and an operator create snarks that aggregate these signatures together and perform state transitions based upon the rules defined in the snark.
+    // force b * c = d
+    // fill this in
 
-The state of the system is defined by a merkle root.
+    // output c + d
+    out <== c + d;
+}
 
-A snark takes the previous merkle root as an input performs some state transition defined by the snark and produces a new merkle root as the output. Our smart contract tracks this merkle root. 
+component main = SimpleChecks();
+```
+NB: there's a circom syntax highlighter in VS code! otherwise one can make do with `C#` highlighting.
 
-Inside our snark we define the rules of our state transition. It defines what state transitions are legal and illegal. 
+- Compile your circuit `circom circuit.circom -o circuit.json`.
 
-## Pre-requirements
+- Generate your input `node generate_circuit_input.js` (generates `input.json`).
 
-Check out this circom intro https://github.com/iden3/circom/blob/master/TUTORIAL.md
+- Calculate the witness `snarkjs calculatewitness -c circuit.json -i input.json`. This generates `witness.json`.
+
+- Perform the trusted setup to get your `proving_key.json` and `verification_key.json`: `snarkjs setup -c circuit.json --protocol groth`.
+
+- Generate the proof `snarkjs proof -w witness.json --pk proving_key.json`. This generates `proof.json` and `public.json`.
+
+- Verify the proof `snarkjs verify`. 
+
+#### Challenge
+Modify the circuit and input to take in length-4 arrays of `a`, `b`, `c`, and `d`, and perform the checks in a `for` loop. Output the sums of `c` and `d` arrays. To get you started:
 
 ```
-npm install -g circom
-npm install -g snarkjs
-git clone https://github.com/iden3/circomlib
-git clone https://github.com/GuthL/roll_up_circom_tutorial
+template SimpleChecks(k) {
+    signal private input a[k];
+    signal private input b[k];
+    signal input c[k];
+    signal private input d[k];
+    signal output out;
+    
+    var sum = 0;
+    for (var i = 0; i < k; i++){
+        // force a + b = c
+        a[i] + b[i] === c[i];
 
-```
-Move the scripts from this repository (roll_up_circom_tutorial/accumulator_transfer, roll_up_circom_tutorial/leaf_update, roll_up_circom_tutorial/signature_verification, roll_up_circom_tutorial/tokens_transfer) to the root of circomlib project.
+        // force b * c = d
+        // fill this in
 
-## Signature validation
+        // add up c and d arrays
+        // use the variable 'sum' defined outside the for loop
+    }
+    // output sum of c and d arrays
+    out <== sum;
+}
 
-We put a public key in our merkle tree and prove we have a signature that was created by that public key for a message of size 80 bits. In the root of the circomlib project, save the following snippet under eddsa_mimc_verifier.circom
-```
-include "./circuits/eddsamimc.circom";
-
-component main = EdDSAMiMCVerifier();
-```
-To generate the circuit usable by snarkjs, run:
-```
-circom eddsa_mimc_verifier.circom -o eddsa_mimc_verifier.cir
-```
-
-From circomlib, you can use eddsa.js to generate an input. Copy the following snippet into a file named input.js. Then, run `node input.js` to generate the input.json which snarkjs recognises.
-
-```
-const eddsa = require("./src/eddsa.js");
-const snarkjs = require("snarkjs");
-const fs = require('fs');
-var util = require('util');
-
-const bigInt = snarkjs.bigInt;
-
-const msg = bigInt(9999);
-
-const prvKey = Buffer.from("0000000000000000000000000000000000000000000000000000000000000001", "hex");
-
-const pubKey = eddsa.prv2pub(prvKey);
-
-const signature = eddsa.signMiMC(prvKey, msg);
-
-const inputs = {
-	enabled: 1,
-	Ax: pubKey[0].toString(),
-	Ay: pubKey[1].toString(),
-	R8x: signature.R8[0].toString(),
-	R8y: signature.R8[1].toString(),
-	S: signature.S.toString(),
-	M: msg.toString()}
-
-fs.writeFileSync('./input.json', JSON.stringify(inputs) , 'utf-8');
+component main = SimpleChecks(4);
 ```
 
-Then test your circuit by running the following command:
-```
-snarkjs calculatewitness -c eddsa_mimc_verifier.cir
-```
 
-## Permissioned merkle tree update
+### Verifying an EdDSA signature
+`cd 2_verify_eddsa`
 
-So now lets say we want to update the leaf in the merkle tree 
-but the only let people update the leaf is if they have the current public key. The leaf index in the tree represents an NFT token owned a user.
+This example works with useful libraries in `circomlib`. Note: we are using v0.0.6 of `circomlib`. 
 
-Save the following snippet under leaf_update.circom
+Create a new file named `circuit.circom` with the following content:
 
 ```
-include "./circuits/mimc.circom";
-include "./circuits/eddsamimc.circom";
-include "./circuits/bitify.circom";
+include "../circomlib/circuits/eddsamimc.circom";
 
-template Main(n) {
-    signal private input paths_to_root[n-1];
-
-    signal input current_state;
-    signal input pubkey_x;
-    signal input pubkey_y;
+template VerifyEdDSAMiMC() {
+    signal input from_x;
+    signal input from_y;
     signal input R8x;
     signal input R8y;
     signal input S;
-    signal input nonce;
-
-    signal output out;
-
-    var i;
+    signal input M;
     
-    component old_hash = MultiMiMC7(3,91);
-    old_hash.in[0] <== pubkey_x;
-    old_hash.in[1] <== pubkey_y;
-    old_hash.in[2] <== nonce;
-    
-    component old_merkle[n-1];
-    old_merkle[0] = MultiMiMC7(2,91);
-    old_merkle[0].in[0] <== old_hash.out;
-    old_merkle[0].in[1] <== paths_to_root[0];
-    for (i=1; i<n-1; i++){
-        old_merkle[i] = MultiMiMC7(2,91);
-        old_merkle[i].in[0] <== old_merkle[i-1].out;
-        old_merkle[i].in[1] <== paths_to_root[i-1];
-    }
-
-    current_state === old_merkle[n-2].out;
-
     component verifier = EdDSAMiMCVerifier();   
     verifier.enabled <== 1;
-    verifier.Ax <== pubkey_x;
-    verifier.Ay <== pubkey_y;
+    verifier.Ax <== from_x;
+    verifier.Ay <== from_y;
     verifier.R8x <== R8x
     verifier.R8y <== R8y
     verifier.S <== S;
-    verifier.M <== old_hash.out;
+    verifier.M <== M;
+}
+
+component main = VerifyEdDSAMiMC();
+```
+
+Generate your input `node generate_circuit_input.js` (generates `input.json`).
+
+You know the drill from here!
+
+#### Challenge
+Modify the circuit and input to take in a length-3 preimage of the message as a private input, and hash them inside the circuit. To get you started:
+
+```
+include "../circomlib/circuits/eddsamimc.circom";
+include "../circomlib/circuits/mimc.circom";
+
+template VerifyEdDSAMiMC(k) {
+    signal input from_x;
+    signal input from_y;
+    signal input R8x;
+    signal input R8y;
+    signal input S;
+    signal private input preimage[k];
+
+    component M = MultiMiMC7(k,91);
+    M.in[0] <== // the first element of your preimage
+    M.in[1] <== // the second element of your preimage
+    M.in[2] <== // the third element of your preimage
     
-    component new_hash = MultiMiMC7(3,91);
-    new_hash.in[0] <== pubkey_x;
-    new_hash.in[1] <== pubkey_y;
-    new_hash.in[2] <== nonce+1;
-    
-    component new_merkle[n-1];
-    new_merkle[0] = MultiMiMC7(2,91);
-    new_merkle[0].in[0] <== new_hash.out;
-    new_merkle[0].in[1] <== paths_to_root[0];
-    for (i=1; i<n-1; i++){
-        new_merkle[i] = MultiMiMC7(2,91);
-        new_merkle[i].in[0] <== new_merkle[i-1].out;
-        new_merkle[i].in[1] <== paths_to_root[i-1];
+    component verifier = EdDSAMiMCVerifier();   
+    verifier.enabled <== 1;
+    verifier.Ax <== from_x;
+    verifier.Ay <== from_y;
+    verifier.R8x <== R8x;
+    verifier.R8y <== R8y;
+    verifier.S <== S;
+    verifier.M <== M.out;
+}
+
+component main = VerifyEdDSAMiMC(3);
+```
+
+### Verifying a Merkle proof
+`cd 3_verify_merkle`
+
+This example shows how to write smaller templates and use them as components in the main circuit. To verify a Merkle proof, we need to take in a leaf and its Merkle root, along with the path from the leaf to the root. Let's break this down into two circuits:
+
+1. `get_merkle_root.circom`: this takes a leaf and a Merkle path and returns the computed Merkle root.
+2. `leaf_existence.circom`: this compares an expected Merkle root with a computed Merkle root.
+
+Create new file named `get_merkle_root.circom` and paste this code in: 
+
+```
+include "../circomlib/circuits/mimc.circom";
+
+template GetMerkleRoot(k){
+// k is depth of tree
+
+    signal input leaf;
+    signal input paths2_root[k];
+    signal input paths2_root_pos[k];
+
+    signal output out;
+
+    // hash of first two entries in tx Merkle proof
+    component merkle_root[k];
+    merkle_root[0] = MultiMiMC7(2,91);
+    merkle_root[0].in[0] <== leaf - paths2_root_pos[0]* (leaf - paths2_root[0]);
+    merkle_root[0].in[1] <== paths2_root[0] - paths2_root_pos[0]* (paths2_root[0] - leaf);
+
+    // hash of all other entries in tx Merkle proof
+    for (var v = 1; v < k; v++){
+        merkle_root[v] = MultiMiMC7(2,91);
+        merkle_root[v].in[0] <== paths2_root[v] - paths2_root_pos[v]* (paths2_root[v] - merkle_root[v-1].out);
+        merkle_root[v].in[1] <== //can you figure this one out?
     }
-    
-    out <== new_merkle[n-2].out;
+
+    // output computed Merkle root
+    out <== merkle_root[k-1].out;
+
 }
 
-component main = Main(24);
-```
-
-To generate the circuit usable by snarkjs, run:
-```
-circom leaf_update.circom -o leaf_update.cir
-```
-Once again, copy the following snippet and generate an example into a file named input.json.
+component main = GetMerkleRoot(2);
 
 ```
-const eddsa = require("./src/eddsa.js");
-const snarkjs = require("snarkjs");
-const fs = require('fs');
-const util = require('util');
-const mimcjs = require("./src/mimc7.js");
+Try to fill in the second line of the `for` loop using the pattern from the lines before. (The solution is in `sample_get_merkle_root.circom`.)
 
-const bigInt = snarkjs.bigInt;
+Now, make the second file `leaf_existence.circom` and paste this in: 
+```
+include "./get_merkle_root.circom";
 
-const DEPTH = 24;
-const msg = bigInt(9999);
+// checks for existence of leaf in tree of depth k
 
-const prvKey = Buffer.from("0000000000000000000000000000000000000000000000000000000000000001", "hex");
+template LeafExistence(k){
+// k is depth of tree
 
-const pubKey = eddsa.prv2pub(prvKey);
-const nonce = 0;
-const old_hash = mimcjs.multiHash([pubKey[0],pubKey[1],nonce]);
+    signal input leaf; 
+    signal input root;
+    signal input paths2_root_pos[k];
+    signal input paths2_root[k];
 
-var old_merkle = new Array(DEPTH-1);
-old_merkle[0] = mimcjs.multiHash([old_hash,0]);
-var i;
-for (i = 1; i < DEPTH-1; i++) { 
-  old_merkle[i] = mimcjs.multiHash([old_merkle[i-1],0]);
+    component computed_root = GetMerkleRoot(k);
+    computed_root.leaf <== leaf;
+
+    for (var w = 0; w < k; w++){
+        computed_root.paths2_root[w] <== // assign elements from paths2_root
+        computed_root.paths2_root_pos[w] <== // assign elements from paths2_root_pos
+    }
+
+    // equality constraint: input tx root === computed tx root 
+    root === computed_root.out;
+
 }
-console.log("Old Root")
-console.log(old_merkle[DEPTH-2]);
 
-const signature = eddsa.signMiMC(prvKey, old_hash);
+component main = LeafExistence(2);
+```
 
-const inputs = {
-	current_state: old_merkle[DEPTH-2].toString(),
-	paths_to_root: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    pubkey_x: pubKey[0].toString(),
-    pubkey_y: pubKey[1].toString(),
-    R8x: signature.R8[0].toString(),
-    R8y: signature.R8[1].toString(),
-    S: signature.S.toString(),
-	nonce: 0}
+Make sure to REMOVE `component main = GetMerkleRoot(2)` from `get_merkle_root.circom`. 
 
- console.log(inputs)
+Modify your input to work with `leaf_existence.circom`.
 
-fs.writeFileSync('./input.json', JSON.stringify(inputs) , 'utf-8');
+#### Challenge
+Like you did in the EdDSA verification exercise, provide the preimage of the leaf hash as private inputs to `leaf_existence.circom`, and hash them in the circuit.
 
-const new_hash = mimcjs.multiHash([pubKey[0],pubKey[1],nonce+1]);
+### Processing a single transaction
+Let's define a transaction as:
 
-var new_merkle = new Array(DEPTH-1);
-new_merkle[0] = mimcjs.multiHash([new_hash,0]);
-var i;
-for (i = 1; i < DEPTH-1; i++) { 
-  new_merkle[i] = mimcjs.multiHash([new_merkle[i-1],0]);
+```js
+class Transaction = {
+    from: eddsa_pubkey,
+    to: eddsa_pubkey,
+    amount: integer
 }
-console.log("New Root")
-console.log(new_merkle[DEPTH-2]);
 ```
+and an account as:
 
-## Token transfers
-
-Lets change our leaf so that instead of a public key it holds a public key and a number. 
-We can use the number to represent a token balance. 
-
+```js
+class Account = {
+    pubkey: eddsa_pubkey,
+    balance: integer
+}
 ```
-include "./circuits/mimc.circom";
-include "./circuits/eddsamimc.circom";
-include "./circuits/bitify.circom";
+NB: we also have a nonce for protection against replay attacks, but for simplicity let's consider it in the next example.
 
-template Main(n) {
-    signal input current_state;
+In RollupNC, processing a single transaction involves:
+- checking that the sender account existsin a tree of accounts, `accounts_root`
+- checking that the hash of the transaction was signed by the sender
+- debiting the sender account
+- updating the `accounts_root` to get `intermediate_root`
+- checking that the receiver account exists in `intermediate_root`
+- crediting the receiver account
+- updating the `accounts_root`to get `final_root`
 
-    signal private input paths2old_root_from[n-1];
-    signal private input paths2old_root_to[n-1];
-    signal private input paths2new_root_from[n-1];
-    signal private input paths2new_root_to[n-1];
+Create a file called `circuit.circom` and put in this code. Fill in the signals for each component. Then, compile your circuit and test it against the `input.json` generated by running `node generate_circuit_input.js`.
+```
+include "./leaf_existence.circom";
+include "./verify_eddsamimc.circom";
+include "./get_merkle_root.circom";
+include "../circomlib/circuits/mimc.circom";
 
-    signal private input paths2root_from_pos[n-1];
-    signal private input paths2root_to_pos[n-1];
-    
-    signal private input pubkey_x;
-    signal private input pubkey_y;
-    signal private input R8x;
-    signal private input R8y;
-    signal private input S;
+template ProcessTx(k){
+    // k is depth of accounts tree
 
-    signal private input nonce_from;
-    signal private input to;
-    signal private input nonce_to;
+    // accounts tree info
+    signal input accounts_root;
+    signal private input intermediate_root;
+    signal private input accounts_pubkeys[2**k, 2];
+    signal private input accounts_balances[2**k];
+
+    // transactions info
+    signal private input sender_pubkey[2];
+    signal private input sender_balance;
+    signal private input receiver_pubkey[2];
+    signal private input receiver_balance;
     signal private input amount;
+    signal private input signature_R8x;
+    signal private input signature_R8y;
+    signal private input signature_S;
+    signal private input sender_proof[k];
+    signal private input sender_proof_pos[k];
+    signal private input receiver_proof[k];
+    signal private input receiver_proof_pos[k];
 
-    signal private input token_balance_from;
-    signal private input token_balance_to;
-    signal private input token_type_from;
-    signal private input token_type_to;
+    // output
+    signal output new_accounts_root;
 
-    signal output out;
-
-    var i;
-
-    var NONCE_MAX_VALUE = 100;
-    
-    // accounts existence check
-    component old_hash_from = MultiMiMC7(4,91);
-    old_hash_from.in[0] <== pubkey_x;
-    old_hash_from.in[1] <== token_balance_from;
-    old_hash_from.in[2] <== nonce_from;
-    old_hash_from.in[3] <== token_type_from;
-
-    component old_merkle_from[n-1];
-    old_merkle_from[0] = MultiMiMC7(2,91);
-    old_merkle_from[0].in[0] <== old_hash_from.out - paths2root_from_pos[0]* (old_hash_from.out - paths2old_root_from[0]);
-    old_merkle_from[0].in[1] <== paths2old_root_from[0] - paths2root_from_pos[0]* (paths2old_root_from[0] - old_hash_from.out);
-    
-    for (i=1; i<n-1; i++){
-    	old_merkle_from[i] = MultiMiMC7(2,91);
-    	old_merkle_from[i].in[0] <== old_merkle_from[i-1].out - paths2root_from_pos[i]* (old_merkle_from[i-1].out - paths2old_root_from[i]);
-    	old_merkle_from[i].in[1] <== paths2old_root_from[i] - paths2root_from_pos[i]* (paths2old_root_from[i] - old_merkle_from[i-1].out);
-    	}
-
-    current_state === old_merkle_from[n-2].out;
-
-    component old_hash_to = MultiMiMC7(4,91);
-    old_hash_to.in[0] <== to;
-    old_hash_to.in[1] <== token_balance_to;
-    old_hash_to.in[2] <== nonce_to;
-    old_hash_to.in[3] <== token_type_to;
-
-    component old_merkle_to[n-1];
-    old_merkle_to[0] = MultiMiMC7(2,91);
-    old_merkle_to[0].in[0] <== old_hash_to.out - paths2root_to_pos[0]* (old_hash_to.out - paths2old_root_to[0]);
-    old_merkle_to[0].in[1] <== paths2old_root_to[0] - paths2root_to_pos[0]* (paths2old_root_to[0] - old_hash_to.out);
-    
-    for (i=1; i<n-1; i++){
-    	old_merkle_to[i] = MultiMiMC7(2,91);
-    	old_merkle_to[i].in[0] <== old_merkle_to[i-1].out - paths2root_to_pos[i]* (old_merkle_to[i-1].out - paths2old_root_to[i]);
-    	old_merkle_to[i].in[1] <== paths2old_root_to[i] - paths2root_to_pos[i]* (paths2old_root_to[i] - old_merkle_to[i-1].out);
-    	}
-
-    current_state === old_merkle_to[n-2].out;
-
-// authorization check
-    component verifier = EdDSAMiMCVerifier();   
-    verifier.enabled <== 1;
-    verifier.Ax <== pubkey_x;
-    verifier.Ay <== pubkey_y;
-    verifier.R8x <== R8x
-    verifier.R8y <== R8y
-    verifier.S <== S;
-    verifier.M <== old_hash_from.out;
-    
-    // balance checks
-    token_balance_from-amount <= token_balance_from;
-    token_balance_to + amount >= token_balance_to;
-
-    nonce_from != NONCE_MAX_VALUE;
-    token_type_from === token_type_to;
-
-    // accounts updates
-    component new_hash_from = MultiMiMC7(4,91);
-    new_hash_from.in[0] <== pubkey_x;
-    new_hash_from.in[1] <== token_balance_from-amount;
-    new_hash_from.in[2] <== nonce_from+1;
-    new_hash_from.in[3] <== token_type_from;
-    
-	component new_merkle_from[n-1];
-    new_merkle_from[0] = MultiMiMC7(2,91);
-    new_merkle_from[0].in[0] <== new_hash_from.out - paths2root_from_pos[0]* (new_hash_from.out - paths2new_root_from[0]);
-    new_merkle_from[0].in[1] <== paths2new_root_from[0] - paths2root_from_pos[0]* (paths2new_root_from[0] - new_hash_from.out);
-    
-    for (i=1; i<n-1; i++){
-    	new_merkle_from[i] = MultiMiMC7(2,91);
-    	new_merkle_from[i].in[0] <== new_merkle_from[i-1].out - paths2root_from_pos[i]* (new_merkle_from[i-1].out - paths2new_root_from[i]);
-    	new_merkle_from[i].in[1] <== paths2new_root_from[i] - paths2root_from_pos[i]* (paths2new_root_from[i] - new_merkle_from[i-1].out);
-    	}
-
-    component new_hash_to = MultiMiMC7(4,91);
-    new_hash_to.in[0] <== to;
-    new_hash_to.in[1] <== token_balance_to+amount;
-    new_hash_to.in[2] <== nonce_to;
-    new_hash_to.in[3] <== token_type_to;
-
-	component new_merkle_to[n-1];
-    new_merkle_to[0] = MultiMiMC7(2,91);
-    new_merkle_to[0].in[0] <== new_hash_to.out - paths2root_to_pos[0]* (new_hash_to.out - paths2new_root_to[0]);
-    new_merkle_to[0].in[1] <== paths2new_root_to[0] - paths2root_to_pos[0]* (paths2new_root_to[0] - new_hash_to.out);
-    
-    for (i=1; i<n-1; i++){
-    	new_merkle_to[i] = MultiMiMC7(2,91);
-    	new_merkle_to[i].in[0] <== new_merkle_to[i-1].out - paths2root_to_pos[i]* (new_merkle_to[i-1].out - paths2new_root_to[i]);
-    	new_merkle_to[i].in[1] <== paths2new_root_to[i] - paths2root_to_pos[i]* (paths2new_root_to[i] - new_merkle_to[i-1].out);
-    	}
-
-   	new_merkle_from[n-2].out === new_merkle_to[n-2].out
-    
-    out <== new_merkle_to[n-2].out;
-
+    // verify sender account exists in accounts_root
+    component senderExistence = LeafExistence(k, 3);
+    senderExistence.preimage[0] <== sender_pubkey[0];
+    senderExistence.preimage[1] <== sender_pubkey[1];
+    senderExistence.preimage[2] <== sender_balance;
+    senderExistence.root <== accounts_root;
+    for (var i = 0; i < k; i++){
+        senderExistence.paths2_root_pos[i] <== sender_proof_pos[i];
+        senderExistence.paths2_root[i] <== sender_proof[i];
     }
 
-component main = Main(6);
+    // check that transaction was signed by sender
+    component signatureCheck = VerifyEdDSAMiMC(5);
+    signatureCheck.from_x <== sender_pubkey[0];
+    signatureCheck.from_y <== sender_pubkey[1];
+    signatureCheck.R8x <== signature_R8x;
+    signatureCheck.R8y <== signature_R8y;
+    signatureCheck.S <== signature_S;
+    signatureCheck.preimage[0] <== sender_pubkey[0];
+    signatureCheck.preimage[1] <== sender_pubkey[1];
+    signatureCheck.preimage[2] <== receiver_pubkey[0];
+    signatureCheck.preimage[3] <== receiver_pubkey[1];
+    signatureCheck.preimage[4] <== amount;
 
-```
-To generate the circuit usable by snarkjs, run:
-```
-circom tokens_transfer.circom -o tokens_transfer.cir
-```
-Copy the following snippet and generate an example into a file named input.json.
+    // debit sender account and hash new sender leaf
+    component newSenderLeaf = MultiMiMC7(3,91){
+        newSenderLeaf.in[0] <== sender_pubkey[0];
+        newSenderLeaf.in[1] <== sender_pubkey[1];
+        newSenderLeaf.in[2] <== sender_balance - amount;
+    }
 
-```
-const eddsa = require("./src/eddsa.js");
-const snarkjs = require("snarkjs");
-const fs = require('fs');
-const util = require('util');
-const mimcjs = require("./src/mimc7.js");
+    // update accounts_root
+    component computed_intermediate_root = GetMerkleRoot(k);
+    computed_intermediate_root.leaf <== newSenderLeaf.out;
+    for (var i = 0; i < k; i++){
+        computed_intermediate_root.paths2_root_pos[i] <== sender_proof_pos[i];
+        computed_intermediate_root.paths2_root[i] <== sender_proof[i];
+    }
 
-const bigInt = snarkjs.bigInt;
+    // check that computed_intermediate_root.out === intermediate_root
+    computed_intermediate_root.out === intermediate_root;
 
-const DEPTH = 6;
+    // verify receiver account exists in intermediate_root
+    component receiverExistence = LeafExistence(k, 3);
+       // provide the appropriate signals to this component! see senderExistence for reference
 
-const prvKey_from = Buffer.from("0000000000000000000000000000000000000000000000000000000000000001", "hex");
-const prvKey_to = Buffer.from("0000000000000000000000000000000000000000000000000000000000000002", "hex");
+    // credit receiver account and hash new receiver leaf
+    component newReceiverLeaf = MultiMiMC7(3,91){
+       // provide the appropriate signals to this component! see newSenderLeaf for reference
+    }
 
-const pubKey_from = eddsa.prv2pub(prvKey_from);
-const pubKey_to = eddsa.prv2pub(prvKey_to);
+    // update accounts_root
+    component computed_final_root = GetMerkleRoot(k);
+       // provide the appropriate signals to this component! see computed_intermediate_root for reference
 
-const nonce_from = 0;
-const nonce_to = 0;
-
-const token_type_from = 10;
-const token_balance_from = 1000;
-const token_type_to = 10;
-const token_balance_to = 2000;
-const amount = 100;
-
-const old_hash_leaf_from = mimcjs.multiHash([pubKey_from[0], token_balance_from, nonce_from, token_type_from]);
-const old_hash_leaf_to = mimcjs.multiHash([pubKey_to[0], token_balance_to, nonce_to, token_type_to]);
-
-console.log("We selected to place account 1 and 2 at index 0 and 1 of the Merkle Tree");
-var old_merkle = new Array(DEPTH-1);
-old_merkle[0] = mimcjs.multiHash([old_hash_leaf_from,old_hash_leaf_to]);
-
-var i;
-for (i = 1; i < DEPTH-1; i++) { 
-  old_merkle[i] = mimcjs.multiHash([old_merkle[i-1],0]);
+    // output final accounts_root
+    new_accounts_root <== computed_final_root.out;
 }
 
-console.log("Initial Root")
-console.log(old_merkle[DEPTH-2]);
+component main = ProcessTx(1);
+```
 
-const signature = eddsa.signMiMC(prvKey_from, old_hash_leaf_from);
+### Processing multiple transactions
+Processing multiple transactions requires us to update the `accounts_root` many times before we arrive at the final one. This means we have to pre-compute all the `intermediate_roots` and pass them to the circuit to use in validating Merkle proofs.
 
-const new_hash_leaf_from = mimcjs.multiHash([pubKey_from[0], token_balance_from-amount, nonce_from+1, token_type_from]);
-const new_hash_leaf_to = mimcjs.multiHash([pubKey_to[0], token_balance_to+amount, nonce_to, token_type_to]);
+Check out https://github.com/therealyingtong/RollupNC/blob/master/snark_circuit/multiple_tokens_transfer_and_withdraw.circom to see how it was implemented.
 
-var new_merkle = new Array(DEPTH-1);
-new_merkle[0] = mimcjs.multiHash([new_hash_leaf_from,new_hash_leaf_to]);
-var i;
-for (i = 1; i < DEPTH-1; i++) { 
-  new_merkle[i] = mimcjs.multiHash([new_merkle[i-1],0]);
+## If conditions and comparators
+## If conditions and comparators
+
+Although circom's parser (see parser/jaz.jison) supports `if` statements, because circom compiles the DSL into 
+arithmetic circuits, circuits whose behavior *depends* on the value of an input can have unexpected behavior.
+
+For example, consider the following example
+
+```
+template BadForceEqualIfEnabled() {
+    signal input enabled;
+    signal input in[2];
+
+    if (enabled) {
+        in[1] === in[0]
+    }
 }
 
-console.log("Updated Root")
-console.log(new_merkle[DEPTH-2]);
-
-const inputs = {
-	paths2old_root_from: [old_hash_leaf_to.toString(), 0, 0, 0, 0],
-	paths2old_root_to: [old_hash_leaf_from.toString(), 0, 0, 0, 0],
-	paths2new_root_from: [new_hash_leaf_to.toString(), 0, 0, 0, 0],
-	paths2new_root_to: [new_hash_leaf_from.toString(), 0, 0, 0, 0],
-	paths2root_from_pos: [0, 0, 0, 0, 0],
-	paths2root_to_pos: [1, 0, 0, 0, 0],
-	current_state: old_merkle[DEPTH-2].toString(),
-	pubkey_x: pubKey_from[0].toString(),
-	pubkey_y: pubKey_from[1].toString(),
-	R8x: signature.R8[0].toString(),
-	R8y: signature.R8[1].toString(),
-	S: signature.S.toString(),
-	nonce_from: nonce_from.toString(),
-	to: pubKey_to[0].toString(),
-	nonce_to: nonce_to.toString(),
-	amount: amount.toString(),
-token_balance_from:token_balance_from.toString(),
-	token_balance_to: token_balance_to.toString(),
-	token_type_from:token_type_from.toString(),
-	token_type_to:token_type_to.toString()
-        }
-
-fs.writeFileSync('./input.json', JSON.stringify(inputs) , 'utf-8');
-
-```
-Careful, this circuit is quite big and took to setup on my MacbookPro more than 10m.
-The witness is generally a better way to check if your circuit compiles properly.
-
-And we need to add some token balance requirements as follows
-
-### Putting this all inside a smart contract 
-
-Compile the code
-```
-circom tokens_transfer.circom -o circuit.json
+component main BadForceEqualIfEnabled()
 ```
 
-Perform the trusted setup *this will take a long time ~ 20 mins* see the comments about reducing proving time in the disclaimer. 
-They apply here also. 
+First compile the circuit:
+`circom circuit.circom -o circuit.json`
+
+Create the `input.json` file:
 
 ```
-snarkjs setup --protocol groth
+{"enabled": 0, "in": [1,2]} 
 ```
 
-Create a smart contract to verify this circuit.
+`snarkjs calculatewitness`
 
-```
-snarkjs generateverifier
-```
+Now, in witness.json,
+change the enabled flag (the second array element) to 1. 
+(If it was set in the 
+previous step the compiler will not calculate a witness because 
+it sees a constraint that cannot be satisfied.)
 
-## Deposits 
+`snarkjs setup --protocol groth`
 
-If we have time
+`snarkjs proof --protocol groth`
 
-### Withdraws 
+`snarkjs verify`
 
-If we have time
+Should get INVALID - we get OK in the bad case.
 
-## Prover race conditions
-
-The prover takes x seconds to create a proof. Therefore we need the merkle root to be the same at the end of the proof as at the start. 
-
-So we need to stagger the depsoits and withdraws that change the token balances. 
+As an exercise, implement the circuit properly
+(or refer to circuits/circomlib/comparators.circom).
 
 
-## Homework :P
 
-We need to add deposits and withdraws to the tutorial
 
-Instead of just storing the public key in the leaf we can store arbitrary information. Can you build
 
-1. NFT
-2. tweets on chain, 
-3. votes
-4. Staked tokens 
 
-anything you can store in the EVM you can store here. 
+{"enabled": 0, "in": [1,2]}
 
-## Disclaimer
-
-1. Circom is not really fast enough to natively create proofs and trusted setups for merkle trees deeper than 12 hashes. or 2 trnasactions per block so we increase things
-2. This does not undermine the central claim here that we can do 500 tps on ethereum for a large subset of dapp logics. The reason being that we can use circom as a user frindly developer enviroment and pass all the proving and setup requiremntes to bellman which is much faster. 
-3. Even then bellman takes ~15 mintues to create a proof of AWS 40 core server. We can produce proofs in parallel that costs about 100 usd per proof. This is still sub sent per transaction which is really cheap compared to eth. 
